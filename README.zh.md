@@ -32,8 +32,7 @@ curl -fsSL https://mimo.xiaomi.com/install | bash
 powershell -ep Bypass -c "irm https://mimo.xiaomi.com/install.ps1 | iex"
 
 # 或通过 npm 安装（全平台）
-# 镜像源（如 cnpm/淘宝源）平台包同步可能滞后，建议使用官方源
-npm install -g @mimo-ai/cli --registry https://registry.npmjs.org
+npm install -g @mimo-ai/cli
 
 # 运行
 mimo
