@@ -168,7 +168,7 @@ Skills are reusable instruction sets that teach agents how to handle specific ta
 | `html-to-video-pipeline` | HTML-to-MP4 rendering via headless browser + ffmpeg |
 | `research-paper-writing` | Write and polish academic papers (ML/CV/NLP style) |
 | `skill-creator` | Interactive guide for creating and improving agent skills |
-| `self-extend` | Create new tools, hooks, and skills to evolve agent capabilities |
+| `evolve` | Self-modification interface — turn repeated patterns into tools, behaviors into hooks, knowledge into skills |
 | `loop` | Schedule recurring prompts on a fixed cadence |
 | `mimocode` | Self-documenting reference for MiMoCode features and config |
 
