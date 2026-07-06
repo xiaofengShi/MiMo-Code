@@ -294,7 +294,7 @@ describe("tool.bash permissions", () => {
     })
   })
 
-  each("asks for bash_delete when running rm inside the project", async () => {
+  each("asks for bash_delete only (no bash prompt) when running rm inside the project", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {
         await Bun.write(path.join(dir, "victim.txt"), "x")
@@ -318,6 +318,9 @@ describe("tool.bash permissions", () => {
         expect(deleteReq).toBeDefined()
         expect(deleteReq!.patterns).toContain("rm victim.txt")
         expect(deleteReq!.metadata.command).toBe("rm victim.txt")
+        // The delete UI shows the full command → a separate `bash` ask would
+        // just be a second confirmation of the same thing.
+        expect(requests.find((r) => r.permission === "bash")).toBeUndefined()
       },
     })
   })
@@ -341,8 +344,10 @@ describe("tool.bash permissions", () => {
             ),
           ),
         ).rejects.toThrow(err.message)
-        const bashReq = requests.find((r) => r.permission === "bash")
-        expect(bashReq).toBeDefined()
+        const deleteReq = requests.find((r) => r.permission === "bash_delete")
+        expect(deleteReq).toBeDefined()
+        expect(deleteReq!.patterns).toContain("git reset --hard HEAD")
+        expect(requests.find((r) => r.permission === "bash")).toBeUndefined()
       },
     })
   })

@@ -444,6 +444,14 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
           }
 
           const current = info()
+          // Forced-ask permissions (bash_delete, …) never persist an allow rule
+          // server-side, so surfacing "Allow always" would be a UX trap: the
+          // click looks like durable trust but the next invocation still
+          // prompts. Offer only "once" and "reject" for those.
+          const options: Record<string, string> =
+            props.request.permission === "bash_delete"
+              ? { once: "Allow once", reject: "Reject" }
+              : { once: "Allow once", always: "Allow always", reject: "Reject" }
 
           const header = () => (
             <box flexDirection="column" gap={0}>
@@ -465,7 +473,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               title="Permission required"
               header={header()}
               body={current.body}
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
+              options={options}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {

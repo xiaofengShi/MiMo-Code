@@ -166,6 +166,15 @@ export function evaluate(permission: string, pattern: string, ...rulesets: Rules
   return evalRule(permission, pattern, ...rulesets)
 }
 
+// Permissions whose "allow" outcome must ALWAYS come from an explicit human ask.
+// A wildcard rule like `permissions.allow: ["*"]` (or a stored `{permission:"*",
+// pattern:"*", action:"allow"}` approval) MUST NOT be able to pre-authorize
+// these — the whole point of a forced-ask permission is that the intent to
+// perform an irreversible action must be recorded in-band, not inherited from
+// a broad blanket rule. Explicit deny still wins; the tool-side env opt-out
+// (e.g. MIMOCODE_AUTO_APPROVE_DELETE for bash_delete) is the only bypass.
+const FORCED_ASK = new Set(["bash_delete"])
+
 export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
 
 export const layer = Layer.effect(
@@ -200,6 +209,8 @@ export const layer = Layer.effect(
       const { ruleset, ...request } = input
       let needsAsk = false
 
+      const forced = FORCED_ASK.has(request.permission)
+
       for (const pattern of request.patterns) {
         // Evaluate the ruleset ALONE first. An explicit deny here must win
         // outright — a persisted approval (e.g. an edit approved "always" in
@@ -210,6 +221,13 @@ export const layer = Layer.effect(
           return yield* new DeniedError({
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
+        }
+        // Forced-ask permissions skip both allow short-circuits: neither the
+        // ruleset nor the persisted approvals can pre-authorize them. They
+        // always land in the human ask flow below (unless denied above).
+        if (forced) {
+          needsAsk = true
+          continue
         }
         if (ruleAction === "allow") continue
         if (evaluate(request.permission, pattern, approved).action === "allow") continue
@@ -369,6 +387,12 @@ export const layer = Layer.effect(
 
       yield* Deferred.succeed(existing.deferred, undefined)
       if (input.reply === "once") return
+      // Forced-ask permissions never persist an approval — even if the caller
+      // (or a future permission type) accidentally passes a non-empty `always`
+      // list, the promise of "human must confirm every time" trumps it.
+      // Treating "always" as "once" for these keeps the UI reply path a no-op
+      // instead of writing a rule that ask() would just ignore next call.
+      if (FORCED_ASK.has(existing.info.permission)) return
 
       for (const pattern of existing.info.always) {
         approved.push({

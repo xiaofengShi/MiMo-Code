@@ -358,17 +358,19 @@ const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) 
 })
 
 // Secondary confirmation for irreversible deletion commands. Uses its own
-// permission type ("bash_delete") so a broad `bash: allow` rule can't silently
-// pre-approve it. `MIMOCODE_AUTO_APPROVE_DELETE=true` skips the ask entirely
-// for callers who explicitly opt out of the extra prompt.
+// permission type ("bash_delete"), which the Permission layer flags as
+// forced-ask: no `allow` rule (not even a broad `"*": allow`) can silently
+// pre-approve it — only an explicit `deny` blocks. `always` is empty because
+// a persisted "allow all deletes" rule is exactly what forced-ask exists to
+// prevent. The delete UI shows the full command, so this ask FULLY replaces
+// the regular bash/external_directory prompts when it fires (see the caller
+// below) — deletion is authorized in a single, unambiguous confirmation.
 const askDelete = Effect.fn("BashTool.askDelete")(function* (ctx: Tool.Context, scan: Scan, command: string) {
-  if (Flag.MIMOCODE_AUTO_APPROVE_DELETE) return
-  if (scan.deletes.size === 0) return
   const patterns = Array.from(scan.deletes)
   yield* ctx.ask({
     permission: "bash_delete",
     patterns,
-    always: ["*"],
+    always: [],
     metadata: { command, deletes: patterns },
   })
 })
@@ -757,8 +759,17 @@ export const BashTool = Tool.define(
               const root = yield* parse(params.command, ps)
               const scan = yield* collect(root, cwd, ps, shell)
               if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
-              yield* ask(ctx, scan)
-              yield* askDelete(ctx, scan, params.command)
+              // Delete-containing commands are authorized by askDelete alone —
+              // the delete UI shows the full command (including any external
+              // paths it touches), so a separate bash/external_directory
+              // prompt would just be a second confirmation of the same thing.
+              // MIMOCODE_AUTO_APPROVE_DELETE trusts deletes and falls back to
+              // the regular ask (where a `bash: deny` rule still blocks).
+              if (scan.deletes.size > 0 && !Flag.MIMOCODE_AUTO_APPROVE_DELETE) {
+                yield* askDelete(ctx, scan, params.command)
+              } else {
+                yield* ask(ctx, scan)
+              }
 
               // Interactive mode: hand terminal to user for direct interaction
               if (params.interactive) {
