@@ -1187,6 +1187,163 @@ describe("ProviderTransform.message - empty image handling", () => {
   })
 })
 
+describe("ProviderTransform.message - oversized image handling", () => {
+  const PROVIDER_HARD_LIMIT = 5_242_880
+  const mockModel = {
+    id: "anthropic/claude-3-5-sonnet",
+    providerID: "anthropic",
+    api: { id: "claude-3-5-sonnet-20241022", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    name: "Claude 3.5 Sonnet",
+    capabilities: {
+      temperature: true,
+      reasoning: false,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: true, video: false, pdf: true },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 0.003, output: 0.015, cache: { read: 0.0003, write: 0.00375 } },
+    limit: { context: 200000, output: 8192 },
+    status: "active",
+    options: {},
+    headers: {},
+  } as any
+
+  const base64ByteSize = (b64: string) => {
+    const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0
+    return Math.floor((b64.length * 3) / 4) - padding
+  }
+
+  // A big decodable JPEG (>5 MB): noisy pixels resist JPEG compression, so the
+  // encoded payload actually exceeds the limit and forces the shrink path.
+  const bigJpegBase64 = (() => {
+    const jpeg = require("jpeg-js")
+    const width = 2600
+    const height = 2600
+    const data = Buffer.alloc(width * height * 4)
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = (i * 73) % 256
+      data[i + 1] = (i * 151) % 256
+      data[i + 2] = (i * 199) % 256
+      data[i + 3] = 255
+    }
+    const encoded = jpeg.encode({ data, width, height }, 100)
+    return Buffer.from(encoded.data).toString("base64")
+  })()
+
+  test("baseline: fixture is a real oversized image", () => {
+    expect(base64ByteSize(bigJpegBase64)).toBeGreaterThan(PROVIDER_HARD_LIMIT)
+  })
+
+  test("recompresses an oversized user image below the limit", () => {
+    const msgs = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What is in this image?" },
+          { type: "image", image: `data:image/jpeg;base64,${bigJpegBase64}` },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const part = (result[0].content as any[])[1]
+    // Either shrunk to a smaller image, or stripped to text — never still oversized.
+    if (part.type === "image") {
+      const match = String(part.image).match(/^data:[^;]+;base64,(.*)$/)
+      expect(match).not.toBeNull()
+      expect(base64ByteSize(match![1])).toBeLessThanOrEqual(PROVIDER_HARD_LIMIT)
+    } else {
+      expect(part.type).toBe("text")
+      expect(part.text).toContain("Image omitted")
+    }
+  })
+
+  test("recompresses an oversized tool-result image below the limit", () => {
+    const msgs = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "read",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "Image read successfully" },
+                { type: "media", mediaType: "image/jpeg", data: bigJpegBase64 },
+              ],
+            },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const entry = (result[0].content[0] as any).output.value[1]
+    if (entry.type === "media" || entry.type === "image-data") {
+      expect(base64ByteSize(entry.data)).toBeLessThanOrEqual(PROVIDER_HARD_LIMIT)
+    } else {
+      expect(entry.type).toBe("text")
+      expect(entry.text).toContain("Image omitted")
+    }
+  })
+
+  test("strips an oversized undecodable image (webp) to a placeholder", () => {
+    // >5 MB of base64 that is NOT a decodable jpeg/png → must become a placeholder.
+    const junk = Buffer.alloc(6_000_000, 0x42).toString("base64")
+    const msgs = [
+      {
+        role: "user",
+        content: [{ type: "image", image: `data:image/webp;base64,${junk}` }],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const part = (result[0].content as any[])[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("Image omitted")
+  })
+
+  test("strips an oversized undecodable tool-result image to a placeholder", () => {
+    const junk = Buffer.alloc(6_000_000, 0x42).toString("base64")
+    const msgs = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "read",
+            output: {
+              type: "content",
+              value: [{ type: "media", mediaType: "image/webp", data: junk }],
+            },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const entry = (result[0].content[0] as any).output.value[0]
+    expect(entry.type).toBe("text")
+    expect(entry.text).toContain("Image omitted")
+  })
+
+  test("leaves a small image untouched (default cap applies by default)", () => {
+    const validBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    const msgs = [
+      { role: "user", content: [{ type: "image", image: `data:image/png;base64,${validBase64}` }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    expect(result[0].content[0]).toEqual({ type: "image", image: `data:image/png;base64,${validBase64}` })
+  })
+})
+
 describe("ProviderTransform.message - anthropic empty content filtering", () => {
   const anthropicModel = {
     id: "anthropic/claude-3-5-sonnet",

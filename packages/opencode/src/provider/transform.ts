@@ -6,6 +6,7 @@ import type * as Provider from "./provider"
 import type * as ModelsDev from "./models"
 import { iife } from "@/util/iife"
 import { Flag } from "@/flag/flag"
+import { compressImage, DEFAULT_MAX_IMAGE_BYTES } from "./image"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -385,20 +386,63 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
   })
 }
 
-// Returns the decoded byte size of a base64 data URL, or undefined for inputs
-// that aren't data URLs (remote URLs, raw binary) and therefore can't be sized.
-function imageByteSize(image: string): number | undefined {
-  if (!image.startsWith("data:")) return undefined
-  const base64 = image.slice(image.indexOf(",") + 1)
+// Decoded byte count of raw base64. Mirrors what the provider measures against
+// its 5 MB image limit.
+function base64ByteSize(base64: string): number {
   if (!base64) return 0
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
   return Math.floor((base64.length * 3) / 4) - padding
 }
 
+// Returns the decoded byte size of a base64 data URL, or undefined for inputs
+// that aren't data URLs (remote URLs, raw binary) and therefore can't be sized.
+function imageByteSize(image: string): number | undefined {
+  if (!image.startsWith("data:")) return undefined
+  return base64ByteSize(image.slice(image.indexOf(",") + 1))
+}
+
+// Split a data URL into its mime + raw base64. Returns undefined for anything
+// that isn't a base64 data URL.
+function parseDataUrl(image: string): { mime: string; base64: string } | undefined {
+  if (!image.startsWith("data:")) return undefined
+  const comma = image.indexOf(",")
+  if (comma === -1) return undefined
+  const mime = image.slice(5, image.indexOf(";") === -1 ? comma : image.indexOf(";"))
+  return { mime, base64: image.slice(comma + 1) }
+}
+
+// Bring one oversized image under maxSize: recompress if we can decode it,
+// otherwise return undefined so the caller strips it to a text placeholder.
+// Never returns something still over the limit.
+function shrinkBase64(
+  mime: string,
+  base64: string,
+  maxSize: number,
+): { mime: string; base64: string } | undefined {
+  const compressed = compressImage(mime, Buffer.from(base64, "base64"), maxSize)
+  if (compressed && base64ByteSize(compressed.data) <= maxSize) {
+    return { mime: compressed.mediaType, base64: compressed.data }
+  }
+  return undefined
+}
+
+const OVERSIZE_PLACEHOLDER = (size: number, maxSize: number) =>
+  `[Image omitted: ${size} bytes exceeds the ${maxSize}-byte limit and could not be compressed.]`
+
+// Two responsibilities:
+// 1. Count cap (maxImages): drop the oldest excess *user* prompt images.
+// 2. Size cap (maxSize, default DEFAULT_MAX_IMAGE_BYTES): for EVERY image the
+//    provider would measure — user `image` parts AND tool-result `media`/
+//    `image-data`/`file-data` parts on tool/assistant messages — recompress
+//    oversized ones under the limit, or strip them to a text placeholder.
+//
+// The size cap runs by default (no flag needed) because a single >5 MB image in
+// history otherwise 400s on every subsequent request and permanently wedges the
+// session — a non-retryable client error. Stripping/compressing it in transform,
+// which runs immediately before send, self-heals such "poison" history.
 function limitImages(msgs: ModelMessage[]): ModelMessage[] {
   const maxImages = Flag.MIMOCODE_MAX_PROMPT_IMAGES
-  const maxSize = Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE
-  if (maxImages === undefined && maxSize === undefined) return msgs
+  const maxSize = Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE ?? DEFAULT_MAX_IMAGE_BYTES
 
   const total = msgs.reduce(
     (sum, msg) =>
@@ -410,21 +454,50 @@ function limitImages(msgs: ModelMessage[]): ModelMessage[] {
   // Drop the oldest excess images so the most recent ones reach the model.
   let toDrop = maxImages === undefined ? 0 : Math.max(0, total - maxImages)
 
+  // Enforce the byte-size cap on one tool-result content entry. Rewrites the
+  // media bytes in place when we can recompress, otherwise swaps it for a text
+  // entry so the oversized payload never reaches the provider.
+  const capToolMedia = (entry: any): any => {
+    if (!entry || typeof entry !== "object") return entry
+    if (entry.type !== "media" && entry.type !== "image-data" && entry.type !== "file-data") return entry
+    if (typeof entry.data !== "string" || typeof entry.mediaType !== "string") return entry
+    if (!entry.mediaType.startsWith("image/")) return entry
+    const size = base64ByteSize(entry.data)
+    if (size <= maxSize) return entry
+    const shrunk = shrinkBase64(entry.mediaType, entry.data, maxSize)
+    if (shrunk) return { ...entry, data: shrunk.base64, mediaType: shrunk.mime }
+    return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(size, maxSize) }
+  }
+
   return msgs.map((msg) => {
-    if (msg.role !== "user" || !Array.isArray(msg.content)) return msg
+    if (!Array.isArray(msg.content)) return msg
+
+    // Tool-result images live on tool/assistant messages, not user messages.
+    if (msg.role === "tool" || msg.role === "assistant") {
+      const content = msg.content.map((part: any) => {
+        if (part?.type !== "tool-result") return part
+        const output = part.output
+        if (!output || output.type !== "content" || !Array.isArray(output.value)) return part
+        return { ...part, output: { ...output, value: output.value.map(capToolMedia) } }
+      })
+      return { ...msg, content }
+    }
+
+    if (msg.role !== "user") return msg
     const content = msg.content.map((part) => {
       if (part.type !== "image") return part
       if (toDrop > 0) {
         toDrop--
         return { type: "text" as const, text: `[Image omitted: exceeds the configured limit of ${maxImages} prompt image(s).]` }
       }
-      if (maxSize !== undefined) {
-        const size = imageByteSize(String(part.image))
-        if (size !== undefined && size > maxSize) {
-          return { type: "text" as const, text: `[Image omitted: exceeds the configured ${maxSize}-byte prompt image size limit.]` }
-        }
+      const size = imageByteSize(String(part.image))
+      if (size === undefined || size <= maxSize) return part
+      const parsed = parseDataUrl(String(part.image))
+      if (parsed && parsed.mime.startsWith("image/")) {
+        const shrunk = shrinkBase64(parsed.mime, parsed.base64, maxSize)
+        if (shrunk) return { ...part, image: `data:${shrunk.mime};base64,${shrunk.base64}` }
       }
-      return part
+      return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(size, maxSize) }
     })
     return { ...msg, content }
   })

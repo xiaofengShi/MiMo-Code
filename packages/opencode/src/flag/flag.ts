@@ -97,10 +97,13 @@ export const Flag = {
   MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 20,
   MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
 
-  // Caps applied to image attachments before a prompt is sent. Both default to
-  // undefined (no limit). MIMOCODE_MAX_PROMPT_IMAGES bounds how many images may
-  // be sent per request (oldest excess images are dropped); MIMOCODE_MAX_PROMPT_IMAGE_SIZE
-  // bounds the decoded byte size of a single image. Values must be positive integers.
+  // Caps applied to image attachments before a prompt is sent.
+  // MIMOCODE_MAX_PROMPT_IMAGES (default undefined = no count limit) bounds how
+  // many images may be sent per request (oldest excess images are dropped).
+  // MIMOCODE_MAX_PROMPT_IMAGE_SIZE overrides the default per-image byte cap
+  // (DEFAULT_MAX_IMAGE_BYTES ~4.5 MB, kept under the provider 5 MB hard limit);
+  // oversized images are recompressed under the cap, or stripped to a text
+  // placeholder when they can't be compressed. Values must be positive integers.
   MIMOCODE_MAX_PROMPT_IMAGES: number("MIMOCODE_MAX_PROMPT_IMAGES"),
   MIMOCODE_MAX_PROMPT_IMAGE_SIZE: number("MIMOCODE_MAX_PROMPT_IMAGE_SIZE"),
   MIMOCODE_MIMO_ONLY,
