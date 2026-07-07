@@ -100,7 +100,7 @@ const InfoSchema = Schema.Struct({
   logLevel: Schema.optional(LogLevelRef).annotate({ description: "Log level" }),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)).annotate({
     description:
-      "Environment variables to inject into the mimocode process and its child processes (e.g. the bash tool). Values override existing same-named process environment variables. Supports {env:VAR} and {file:path} substitution.",
+      "Environment variables to inject into the mimocode process and its child processes (e.g. the bash tool). A variable already set in the real environment takes precedence — config values only apply when the variable is not already set. Supports {env:VAR} and {file:path} substitution.",
   }),
   server: Schema.optional(ConfigServer.Server).annotate({
     description: "Server configuration for mimo serve and web commands",
@@ -970,6 +970,12 @@ export const layer = Layer.effect(
 
         if (result.env) {
           for (const [key, value] of Object.entries(result.env)) {
+            // Defer to the real environment: only inject when the variable is
+            // not already set in the process. A caller's runtime env (CI,
+            // container, `FOO=bar mimo`) is more specific than a persisted
+            // config default and must win. Matches Claude Code, where the
+            // settings field applies only when the env var is not set.
+            if (process.env[key] !== undefined) continue
             process.env[key] = value
             yield* env.set(key, value)
           }

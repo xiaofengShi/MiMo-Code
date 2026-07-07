@@ -44,10 +44,10 @@ afterEach(async () => {
   await clear(true)
 })
 
-test("config env injects into process.env and Env service, overriding existing vars", async () => {
+test("config env injects new vars but defers to existing process env vars", async () => {
   const originalNew = process.env["MIMO_TEST_ENV_NEW"]
-  const originalOverride = process.env["MIMO_TEST_ENV_OVERRIDE"]
-  process.env["MIMO_TEST_ENV_OVERRIDE"] = "before"
+  const originalExisting = process.env["MIMO_TEST_ENV_EXISTING"]
+  process.env["MIMO_TEST_ENV_EXISTING"] = "from-real-env"
   delete process.env["MIMO_TEST_ENV_NEW"]
 
   try {
@@ -59,7 +59,7 @@ test("config env injects into process.env and Env service, overriding existing v
             $schema: "https://opencode.ai/config.json",
             env: {
               MIMO_TEST_ENV_NEW: "hello123",
-              MIMO_TEST_ENV_OVERRIDE: "after",
+              MIMO_TEST_ENV_EXISTING: "from-config",
             },
           }),
         )
@@ -82,24 +82,25 @@ test("config env injects into process.env and Env service, overriding existing v
         // config field is parsed
         expect(result.config.env).toEqual({
           MIMO_TEST_ENV_NEW: "hello123",
-          MIMO_TEST_ENV_OVERRIDE: "after",
+          MIMO_TEST_ENV_EXISTING: "from-config",
         })
 
-        // injected into process.env (what the bash tool reads)
+        // new var injected into process.env (what the bash tool reads)
         expect(process.env["MIMO_TEST_ENV_NEW"]).toBe("hello123")
-        // overrides existing process env var
-        expect(process.env["MIMO_TEST_ENV_OVERRIDE"]).toBe("after")
+        // real env var takes precedence — config value must NOT clobber it
+        expect(process.env["MIMO_TEST_ENV_EXISTING"]).toBe("from-real-env")
 
-        // injected into the Env service
+        // new var injected into the Env service
         expect(result.envState["MIMO_TEST_ENV_NEW"]).toBe("hello123")
-        expect(result.envState["MIMO_TEST_ENV_OVERRIDE"]).toBe("after")
+        // Env service also reflects the real env value, not the config default
+        expect(result.envState["MIMO_TEST_ENV_EXISTING"]).toBe("from-real-env")
       },
     })
   } finally {
     if (originalNew !== undefined) process.env["MIMO_TEST_ENV_NEW"] = originalNew
     else delete process.env["MIMO_TEST_ENV_NEW"]
-    if (originalOverride !== undefined) process.env["MIMO_TEST_ENV_OVERRIDE"] = originalOverride
-    else delete process.env["MIMO_TEST_ENV_OVERRIDE"]
+    if (originalExisting !== undefined) process.env["MIMO_TEST_ENV_EXISTING"] = originalExisting
+    else delete process.env["MIMO_TEST_ENV_EXISTING"]
   }
 })
 
