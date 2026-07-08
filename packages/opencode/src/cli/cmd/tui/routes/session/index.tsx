@@ -1340,16 +1340,18 @@ export function Session() {
           </Show>
           <Toast />
         </box>
-        <SidebarToggleButton
-          visible={sidebarVisible()}
-          onToggle={() => {
-            batch(() => {
-              const isVisible = sidebarVisible()
-              setSidebar(() => (isVisible ? "hide" : "auto"))
-              setSidebarOpen(!isVisible)
-            })
-          }}
-        />
+        <Show when={wide() || sidebarVisible()}>
+          <SidebarToggleButton
+            visible={sidebarVisible()}
+            onToggle={() => {
+              batch(() => {
+                const isVisible = sidebarVisible()
+                setSidebar(() => (isVisible ? "hide" : "auto"))
+                setSidebarOpen(!isVisible)
+              })
+            }}
+          />
+        </Show>
         <Show when={sidebarVisible()}>
           <Switch>
             <Match when={wide()}>
