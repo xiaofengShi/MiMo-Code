@@ -1083,49 +1083,6 @@ test("model modalities default correctly", async () => {
       const model = providers[ProviderID.make("test-provider")].models["test-model"]
       expect(model.capabilities.input.text).toBe(true)
       expect(model.capabilities.output.text).toBe(true)
-      // Image input defaults to true when modalities are unspecified (a model is
-      // assumed vision-capable unless it explicitly declares modalities without "image").
-      expect(model.capabilities.input.image).toBe(true)
-      // Other non-text modalities still default to false.
-      expect(model.capabilities.input.audio).toBe(false)
-      expect(model.capabilities.input.pdf).toBe(false)
-    },
-  })
-})
-
-test("explicit text-only modalities disable image input", async () => {
-  await using tmp = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, "mimocode.json"),
-        JSON.stringify({
-          $schema: "https://opencode.ai/config.json",
-          provider: {
-            "test-provider": {
-              name: "Test",
-              npm: "@ai-sdk/openai-compatible",
-              env: [],
-              models: {
-                "text-only": {
-                  name: "Text Only",
-                  tool_call: true,
-                  limit: { context: 8000, output: 2000 },
-                  modalities: { input: ["text"], output: ["text"] },
-                },
-              },
-              options: { apiKey: "test" },
-            },
-          },
-        }),
-      )
-    },
-  })
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      const providers = await list()
-      const model = providers[ProviderID.make("test-provider")].models["text-only"]
-      expect(model.capabilities.input.image).toBe(false)
     },
   })
 })
@@ -1331,12 +1288,12 @@ test("getVisionModel prefers in-house model over cheaper non-in-house", async ()
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
-      // In-house (mimo) beats any cheaper external vision model. With image
-      // input now defaulting on, other mimo catalog models also qualify as
-      // vision-capable, so assert the winner is in-house rather than a specific id.
+      // mimo-vision (cost 100, in-house) beats vendor-cheap-vision (cost 1);
+      // vendor-text is text-only and excluded entirely.
       const model = await getVisionModel()
       expect(model).toBeDefined()
       expect(String(model?.providerID)).toBe("mimo")
+      expect(String(model?.id)).toBe("mimo-vision")
     },
   })
 })

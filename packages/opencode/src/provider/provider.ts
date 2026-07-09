@@ -1024,10 +1024,7 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
       input: {
         text: model.modalities?.input?.includes("text") ?? false,
         audio: model.modalities?.input?.includes("audio") ?? false,
-        // Default to image-capable when modalities are unspecified: most current
-        // models accept image input, and a false negative silently strips images.
-        // Set modalities.input WITHOUT "image" to explicitly mark a text-only model.
-        image: model.modalities?.input?.includes("image") ?? true,
+        image: model.modalities?.input?.includes("image") ?? false,
         video: model.modalities?.input?.includes("video") ?? false,
         pdf: model.modalities?.input?.includes("pdf") ?? false,
       },
@@ -1197,9 +1194,7 @@ const layer: Layer.Layer<
                 input: {
                   text: model.modalities?.input?.includes("text") ?? existingModel?.capabilities.input.text ?? true,
                   audio: model.modalities?.input?.includes("audio") ?? existingModel?.capabilities.input.audio ?? false,
-                  // Default to image-capable when unspecified anywhere (config + models.dev).
-                  // Declare modalities.input without "image" to mark a text-only model.
-                  image: model.modalities?.input?.includes("image") ?? existingModel?.capabilities.input.image ?? true,
+                  image: model.modalities?.input?.includes("image") ?? existingModel?.capabilities.input.image ?? false,
                   video: model.modalities?.input?.includes("video") ?? existingModel?.capabilities.input.video ?? false,
                   pdf: model.modalities?.input?.includes("pdf") ?? existingModel?.capabilities.input.pdf ?? false,
                 },

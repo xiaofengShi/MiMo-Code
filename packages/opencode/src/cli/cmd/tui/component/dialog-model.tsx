@@ -40,20 +40,6 @@ export function DialogModel(props: { providerID?: string }) {
   const modelName = (providerID: string, modelID: string) =>
     modelID === "mimo-auto" ? t("tui.model.mimo_auto.name") : Model.name(sync.data.provider, providerID, modelID)
 
-  // Vision is the default, so tagging every model would be pure noise. Flag
-  // only the minority that CANNOT read images (the noteworthy case). Toggle a
-  // model's image capability with ctrl+o.
-  const visionTag = (providerID: string, modelID: string) => {
-    const model = sync.data.provider.find((p) => p.id === providerID)?.models[modelID]
-    if (!model) return undefined
-    return model.capabilities.input.image ? undefined : "text-only"
-  }
-  const withVision = (providerID: string, modelID: string, description: string | undefined) => {
-    const tag = visionTag(providerID, modelID)
-    if (!tag) return description
-    return description ? `${description} · ${tag}` : tag
-  }
-
   const showExtra = createMemo(() => connected() && !props.providerID)
 
   const options = createMemo(() => {
@@ -188,7 +174,7 @@ export function DialogModel(props: { providerID?: string }) {
           map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },
             title: info.name ?? model,
-            description: withVision(provider.id, model, undefined),
+            description: undefined as string | undefined,
             category: connected() ? provider.name : undefined,
             disabled: provider.id === "opencode" && model.includes("-nano"),
             footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
@@ -293,15 +279,6 @@ export function DialogModel(props: { providerID?: string }) {
             local.model.toggleFavorite(v)
           },
         },
-        {
-          keybind: keybind.all.model_vision_toggle?.[0],
-          title: "Toggle vision",
-          onTrigger: (option) => {
-            const v = option.value as { providerID: string; modelID: string }
-            if (v.modelID === ADD_MODEL_SENTINEL) return
-            void toggleVision({ sdk, sync, toast, providerID: v.providerID, modelID: v.modelID })
-          },
-        },
       ]}
       onFilter={setQuery}
       flat={true}
@@ -355,61 +332,4 @@ async function runAddModelWizard(opts: {
   await sdk.client.instance.dispose()
   await sync.bootstrap()
   dialog.replace(() => <DialogModel providerID={providerID} />)
-}
-
-// Toggle whether a model accepts image input by editing its
-// modalities.input in mimocode.json, then live-reload so the change applies
-// immediately. Preserves the model's other input modalities.
-async function toggleVision(opts: {
-  sdk: ReturnType<typeof useSDK>
-  sync: ReturnType<typeof useSync>
-  toast: ToastContext
-  providerID: string
-  modelID: string
-}) {
-  const { sdk, sync, toast, providerID, modelID } = opts
-
-  const provider = sync.data.provider.find((p) => p.id === providerID)
-  const model = provider?.models[modelID]
-  if (!model) {
-    toast.show({ variant: "error", message: `Model ${providerID}/${modelID} not found` })
-    return
-  }
-
-  const current = model.capabilities.input
-  const nextImage = !current.image
-  // Rebuild the input modality list from current capabilities, flipping image.
-  const modalities = (["text", "audio", "image", "video", "pdf"] as const).filter((m) =>
-    m === "image" ? nextImage : current[m],
-  )
-
-  const patch = {
-    provider: {
-      [providerID]: {
-        models: {
-          [modelID]: {
-            modalities: { input: modalities, output: [] as string[] },
-          },
-        },
-      },
-    },
-  }
-  // Preserve declared output modalities if any (config re-merges over models.dev).
-  patch.provider[providerID].models[modelID].modalities.output = (
-    ["text", "audio", "image", "video", "pdf"] as const
-  ).filter((m) => model.capabilities.output[m])
-
-  const updateRes = await sdk.client.global.config.update({ config: patch as any })
-  if (updateRes.error) {
-    toast.show({ variant: "error", message: JSON.stringify(updateRes.error) })
-    return
-  }
-
-  await sdk.client.instance.dispose()
-  await sync.bootstrap()
-  toast.show({
-    variant: nextImage ? "success" : "info",
-    message: `${model.name ?? modelID}: image input ${nextImage ? "enabled" : "disabled"}`,
-    duration: 3000,
-  })
 }

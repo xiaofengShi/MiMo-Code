@@ -1294,7 +1294,7 @@ export function Prompt(props: PromptProps) {
         if (mime.startsWith("image/") || mime === "application/pdf") {
           if (mime.startsWith("image/") && !activeModelSupportsImage()) {
             insertFileReference(filepath)
-            toast.show({ message: t("tui.paste.image.fallback_path"), variant: "info", duration: 3000 })
+            toast.show({ message: t("tui.paste.image.fallback_path"), variant: "warning", duration: 5000 })
             return
           }
           const content = await Filesystem.readArrayBuffer(filepath)
@@ -1385,7 +1385,7 @@ export function Prompt(props: PromptProps) {
       }
       const filepath = await Clipboard.spillImage(content)
       insertFileReference(filepath)
-      toast.show({ message: t("tui.paste.image.fallback_path"), variant: "info", duration: 3000 })
+      toast.show({ message: t("tui.paste.image.fallback_path"), variant: "warning", duration: 5000 })
       return
     }
     await pastePlainText(content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))

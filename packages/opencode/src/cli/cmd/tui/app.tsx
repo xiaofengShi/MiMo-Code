@@ -73,6 +73,7 @@ import { isPlainTerminal } from "./util/terminal"
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
+import { DialogModalities } from "./component/dialog-modalities"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
@@ -577,6 +578,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
       onSelect: () => {
         dialog.replace(() => <DialogAgent />)
+      },
+    },
+    {
+      title: t("tui.command.modalities.title"),
+      value: "model.modalities",
+      category: "agent",
+      slash: {
+        name: "modalities",
+      },
+      onSelect: () => {
+        DialogModalities.show(dialog)
       },
     },
     {
