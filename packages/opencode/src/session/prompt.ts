@@ -926,8 +926,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         ? yield* actorRegistry.get(input.session.id, input.agentID)
         : undefined
       // Three-way permission-ask routing (see decideAskRouting): system agent ->
-      // auto-deny; orchestrator peer -> FORWARD for approval; other background ->
-      // auto-deny; normal -> interactive.
+      // auto-deny; orchestrator peer -> FORWARD for approval; ordinary background
+      // subagent -> INHERIT the parent's held grants; normal -> interactive.
       const askRouting = decideAskRouting({
         askActor: askActor
           ? {
