@@ -205,7 +205,7 @@ export function Session() {
     if (evt.type !== "scroll") return
     setScrolling(true)
     if (scrollHideTimer) clearTimeout(scrollHideTimer)
-    scrollHideTimer = setTimeout(() => setScrolling(false), 1000)
+    scrollHideTimer = setTimeout(() => setScrolling(false), 2500)
   }
   onCleanup(() => {
     if (scrollHideTimer) clearTimeout(scrollHideTimer)
@@ -281,6 +281,7 @@ export function Session() {
 
   let seeded = false
   let scroll: ScrollBoxRenderable
+  const scrollByAgent = new Map<string, number>()
   let prompt: PromptRef | undefined
   const bind = (r: PromptRef | undefined) => {
     prompt = r
@@ -342,10 +343,13 @@ export function Session() {
   })
 
   // Helper: Find next visible message boundary in direction
+  // Note: scroll.y is the scrollbox's layout Y, and child.y from getChildren()
+  // is in the same absolute coordinate space (includes scroll offset), so
+  // child.y - scroll.y gives a child's position relative to the viewport top.
   const findNextVisibleMessage = (direction: "next" | "prev"): string | null => {
     const children = scroll.getChildren()
     const messagesList = messages()
-    const scrollTop = scroll.y
+    const viewportTop = scroll.y
 
     // Get visible messages sorted by position, filtering for valid non-synthetic, non-ignored content
     // (a synthetic cron-origin text part is also visible — see the clock-row branch in UserMessage)
@@ -374,10 +378,10 @@ export function Session() {
 
     if (direction === "next") {
       // Find first message below current position
-      return visibleMessages.find((c) => c.y > scrollTop + 10)?.id ?? null
+      return visibleMessages.find((c) => c.y > viewportTop + 10)?.id ?? null
     }
     // Find last message above current position
-    return [...visibleMessages].reverse().find((c) => c.y < scrollTop - 10)?.id ?? null
+    return [...visibleMessages].reverse().find((c) => c.y < viewportTop - 10)?.id ?? null
   }
 
   // Helper: Scroll to message in direction or fallback to page scroll
@@ -1150,7 +1154,33 @@ export function Session() {
   })
 
   // snap to bottom when session changes
-  createEffect(on(() => route.sessionID, toBottom))
+  createEffect(on(() => route.sessionID, () => { scrollByAgent.clear(); toBottom() }))
+
+  // save/restore scroll position when switching between agent views
+  createEffect(
+    on(
+      () => currentAgentID(),
+      (agentID, prevAgentID) => {
+        if (prevAgentID && scroll && !scroll.isDestroyed) {
+          if (scroll.scrollTop >= scroll.scrollHeight - 1) scrollByAgent.delete(prevAgentID)
+          else scrollByAgent.set(prevAgentID, scroll.scrollTop)
+        }
+        const saved = scrollByAgent.get(agentID)
+        if (saved !== undefined) {
+          let tries = 0
+          const restore = () => {
+            if (!scroll || scroll.isDestroyed) return
+            scroll.scrollTo(Math.min(saved, scroll.scrollHeight))
+            if (++tries < 5 && scroll.scrollTop < saved - 1) setTimeout(restore, 60)
+          }
+          setTimeout(restore, 50)
+          return
+        }
+        toBottom()
+      },
+      { defer: true },
+    ),
+  )
 
   return (
     <context.Provider
