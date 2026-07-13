@@ -351,6 +351,50 @@ export const layer = Layer.effect(
       yield* state.cancel(sessionID)
     })
 
+    // Shared rebuild-from-checkpoint step used by BOTH the automatic overflow
+    // path in runLoop and the manual `/rebuild` command, so the two can never
+    // drift in logic or boundary conditions. Inserts a checkpoint boundary
+    // marker (never deletes DB messages) at the current watermark so the next
+    // runLoop iteration rebuilds context from the on-disk checkpoint while the
+    // live message tail after the watermark is preserved verbatim. Does NOT
+    // block on an in-flight writer (same policy as the auto path — a slightly
+    // stale checkpoint now beats a fresh one that never arrives). Returns true
+    // iff a boundary was inserted (i.e. a usable checkpoint existed); callers
+    // fall back to compaction when it returns false.
+    const rebuildFromCheckpoint = Effect.fn("SessionPrompt.rebuildFromCheckpoint")(function* (input: {
+      sessionID: SessionID
+      msgs: MessageV2.WithParts[]
+      agentID?: string
+      agent: string
+      model: { providerID: string; id: string }
+    }) {
+      const hasCP = yield* checkpoint
+        .hasCheckpoint(input.sessionID)
+        .pipe(Effect.catch(() => Effect.succeed(false)))
+      if (!hasCP) return false
+
+      const boundary = yield* checkpoint
+        .lastBoundary(input.sessionID)
+        .pipe(Effect.catch(() => Effect.succeed(undefined)))
+      if (!boundary) return false
+
+      const boundaryMsg = input.msgs.find((m) => m.info.id === boundary)
+      const inserted = yield* checkpoint
+        .insertRebuildBoundary({
+          sessionID: input.sessionID,
+          boundary,
+          lastMessageInfo: computeLastMessageInfo(input.msgs.map((m) => m.info)),
+          agentID: input.agentID,
+          agent: input.agent,
+          model: { providerID: input.model.providerID, modelID: input.model.id },
+          boundaryCreatedAt: boundaryMsg?.info.time.created,
+        })
+        .pipe(Effect.catch(() => Effect.succeed(false)))
+
+      if (inserted) yield* prune.resetThresholds(input.sessionID)
+      return inserted
+    })
+
     const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
       const ctx = yield* InstanceState.context
       const parts: PromptInput["parts"] = [{ type: "text", text: template }]
@@ -3010,36 +3054,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             // Main-agent overflow: insert a checkpoint boundary marker (never
             // deletes DB messages) so the next iteration rebuilds from the
-            // freshest checkpoint. Fall back to compaction only when no boundary
-            // can be produced.
-            const hasCP = yield* checkpoint.hasCheckpoint(sessionID).pipe(Effect.catch(() => Effect.succeed(false)))
-            if (hasCP) {
-              // Wait for any running writer so the freshest checkpoint is available
-              yield* checkpoint.waitForWriter(sessionID).pipe(Effect.ignore)
-
-              const boundary = yield* checkpoint
-                .lastBoundary(sessionID)
-                .pipe(Effect.catch(() => Effect.succeed(undefined)))
-              const boundaryMsg = boundary ? msgs.find((m) => m.info.id === boundary) : undefined
-              const inserted = boundary
-                ? yield* checkpoint
-                    .insertRebuildBoundary({
-                      sessionID,
-                      boundary,
-                      lastMessageInfo: computeLastMessageInfo(msgs.map((m) => m.info)),
-                      agentID: lastUser.agentID,
-                      agent: lastUser.agent,
-                      model: { providerID: model.providerID, modelID: model.id },
-                      boundaryCreatedAt: boundaryMsg?.info.time.created,
-                    })
-                    .pipe(Effect.catch(() => Effect.succeed(false)))
-                : false
-
-              if (inserted) {
-                yield* prune.resetThresholds(sessionID)
-                skipOverflowCheck = true
-                continue
-              }
+            // freshest checkpoint. Shared with the manual `/rebuild` command via
+            // rebuildFromCheckpoint so logic/boundary conditions can't drift.
+            // Falls back to compaction only when no boundary can be produced.
+            const inserted = yield* rebuildFromCheckpoint({
+              sessionID,
+              msgs,
+              agentID: lastUser.agentID,
+              agent: lastUser.agent,
+              model: { providerID: model.providerID, id: model.id },
+            })
+            if (inserted) {
+              skipOverflowCheck = true
+              continue
             }
 
             // F39: no checkpoint — fall back to compaction (LLM-driven lossy summary).
@@ -3576,39 +3603,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return "continue" as const
               }
 
-              // Main-agent provider-signalled overflow: insert a checkpoint
-              // boundary marker (never deletes). Prefer rebuild over compaction:
-              // if a writer is running or finished, wait (bounded) and rebuild
-              // from it. Fall back to compaction only when no boundary exists.
-              const writerRunning = yield* checkpoint.isWriterRunning(sessionID)
-                .pipe(Effect.catch(() => Effect.succeed(false)))
-              const hasCP = yield* checkpoint.hasCheckpoint(sessionID)
-                .pipe(Effect.catch(() => Effect.succeed(false)))
-
-              if (writerRunning || hasCP) {
-                yield* checkpoint.waitForWriter(sessionID).pipe(Effect.ignore)
-                const boundary2 = yield* checkpoint.lastBoundary(sessionID)
-                  .pipe(Effect.catch(() => Effect.succeed(undefined)))
-                const boundary2Msg = boundary2 ? msgs.find((m) => m.info.id === boundary2) : undefined
-                const inserted2 = boundary2
-                  ? yield* checkpoint
-                      .insertRebuildBoundary({
-                        sessionID,
-                        boundary: boundary2,
-                        lastMessageInfo: computeLastMessageInfo(msgs.map((m) => m.info)),
-                        agentID: lastUser.agentID,
-                        agent: lastUser.agent,
-                        model: { providerID: model.providerID, modelID: model.id },
-                        boundaryCreatedAt: boundary2Msg?.info.time.created,
-                      })
-                      .pipe(Effect.catch(() => Effect.succeed(false)))
-                  : false
-
-                if (inserted2) {
-                  yield* prune.resetThresholds(sessionID)
-                  return "continue" as const
-                }
-              }
+              // Main-agent provider-signalled overflow: prefer rebuild over
+              // compaction. Shared with the manual `/rebuild` command via
+              // rebuildFromCheckpoint (does not block on the writer; uses the
+              // on-disk checkpoint). Fall back to compaction only when no
+              // boundary can be produced.
+              const inserted2 = yield* rebuildFromCheckpoint({
+                sessionID,
+                msgs,
+                agentID: lastUser.agentID,
+                agent: lastUser.agent,
+                model: { providerID: model.providerID, id: model.id },
+              })
+              if (inserted2) return "continue" as const
 
               // F39: no checkpoint — fall back to compaction (LLM-driven lossy summary).
               yield* compaction
@@ -3768,6 +3775,43 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           })
         }
         yield* goal.set(input.sessionID, condition)
+      }
+
+      // /rebuild — manually rebuild the conversation context now, from the
+      // latest checkpoint. Reuses the SAME rebuildFromCheckpoint step as the
+      // automatic overflow path (identical logic + boundary conditions), so a
+      // user-triggered rebuild behaves exactly like an auto one: it inserts a
+      // checkpoint boundary at the watermark (recent messages after it are kept
+      // verbatim; earlier ones collapse to the checkpoint summary on the next
+      // turn). If no usable checkpoint exists yet, tell the user rather than
+      // silently doing nothing — the first checkpoint has to be produced by
+      // normal turns before there is anything to rebuild from.
+      if (input.command === Command.Default.REBUILD) {
+        const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" })
+        const lastUser = msgs.findLast((m) => m.info.role === "user")
+        const model = yield* lastModel(input.sessionID)
+        const inserted = yield* rebuildFromCheckpoint({
+          sessionID: input.sessionID,
+          msgs,
+          agentID: lastUser?.info.agentID ?? "main",
+          agent: agentName,
+          model: { providerID: model.providerID, id: model.modelID },
+        }).pipe(Effect.catch(() => Effect.succeed(false)))
+        return yield* prompt({
+          sessionID: input.sessionID,
+          messageID: input.messageID,
+          agent: agentName,
+          parts: [
+            {
+              type: "text",
+              text: inserted
+                ? "Context rebuilt from the latest checkpoint. Recent messages are preserved; earlier context is now summarized."
+                : "No checkpoint is available to rebuild from yet — continue the conversation and a checkpoint will be written automatically.",
+              synthetic: true,
+            },
+          ],
+          noReply: true,
+        })
       }
 
       const raw = input.arguments.match(argsRegex) ?? []
