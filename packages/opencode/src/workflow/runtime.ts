@@ -972,6 +972,7 @@ export const layer = Layer.effect(
         // disposition below owns it) rather than the returned deliverable: in the
         // isolated path a successful agent's work is its worktree, so a status
         // success is a success even when it returned no text.
+        if (spawned) await Instance.disposeDirectory(info.directory)
         entry.running--
         if (succeeded) entry.succeeded++
         else {

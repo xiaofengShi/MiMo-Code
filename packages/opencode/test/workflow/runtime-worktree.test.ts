@@ -55,6 +55,18 @@ describe("WorkflowRuntime worktree isolation", () => {
         // Changed worktree -> result is enveloped with _worktree carrying the dir.
         expect(result?._worktree?.directory).toBeTruthy()
         const wtDir = result._worktree.directory as string
+        let initialized = 0
+        yield* Effect.promise(() =>
+          Instance.provide({
+            directory: wtDir,
+            init: () => {
+              initialized++
+              return Promise.resolve()
+            },
+            fn: () => undefined,
+          }),
+        )
+        expect(initialized).toBe(1)
         // The edit is in the worktree, NOT the parent project dir.
         expect(yield* Effect.promise(() => fileExists(`${wtDir}/port.rs`))).toBe(true)
         expect(yield* Effect.promise(() => fileExists(`${dir}/port.rs`))).toBe(false)
