@@ -9,7 +9,10 @@ function parseResult(result: CallToolResult) {
 describe("MCP tool result normalization", () => {
   test("preserves standard fields and classifies tool execution errors", () => {
     const result: CallToolResult = {
-      content: [{ type: "text", text: "Message was not sent" }],
+      content: [
+        { type: "text", text: "Message was not sent" },
+        { type: "image", data: "Zm9v", mimeType: "image/png" },
+      ],
       structuredContent: { sent: false, reason: "composer rejected the request" },
       isError: true,
       _meta: { traceId: "private-trace-id" },
@@ -24,6 +27,12 @@ describe("MCP tool result normalization", () => {
     expect(normalized.output).toBe(
       'Message was not sent\n\nStructured content:\n{"sent":false,"reason":"composer rejected the request"}',
     )
+    expect(normalized.attachments).toEqual([
+      {
+        mime: "image/png",
+        url: "data:image/png;base64,Zm9v",
+      },
+    ])
     expect(normalized.metadata.mcp).toEqual({
       structuredContent: result.structuredContent,
       isError: true,

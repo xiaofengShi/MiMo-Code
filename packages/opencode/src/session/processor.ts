@@ -21,7 +21,7 @@ import type { Provider } from "@/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
 import { isRecoverableError } from "@/tool/recoverable"
-import { getToolResultMetadata } from "@/tool/result-error"
+import { getToolResultAttachments, getToolResultMetadata } from "@/tool/result-error"
 import { Log } from "@/util"
 import { isRecord } from "@/util/record"
 import { createTextNgramMonitor, type TextNgramMonitor } from "./prompt/text-ngram-detection"
@@ -296,6 +296,10 @@ export const layer: Layer.Layer<
           ...getToolResultMetadata(error),
           ...(recoverable ? { recoverable: true } : {}),
         }
+        const attachments = getToolResultAttachments(error)?.flatMap((attachment) => {
+          const parsed = MessageV2.FilePart.safeParse(attachment)
+          return parsed.success ? [parsed.data] : []
+        })
         yield* session.updatePart({
           ...match.part,
           state: {
@@ -303,6 +307,7 @@ export const layer: Layer.Layer<
             input: match.part.state.input,
             error: errorMessage(error),
             ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
             time: { start: match.part.state.time.start, end: Date.now() },
           },
         })

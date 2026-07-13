@@ -344,6 +344,7 @@ export const ToolStateError = z
       start: z.number(),
       end: z.number(),
     }),
+    attachments: FilePart.array().optional(),
   })
   .meta({
     ref: "ToolStateError",
@@ -788,6 +789,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
           }
           if (part.state.status === "error") {
+            const attachments = options?.stripMedia ? [] : (part.state.attachments ?? [])
+            media.push(...attachments.filter((attachment) => isMedia(attachment.mime)))
             const output = part.state.metadata?.interrupted === true ? part.state.metadata.output : undefined
             if (typeof output === "string") {
               assistantMessage.parts.push({

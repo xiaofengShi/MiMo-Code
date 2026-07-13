@@ -265,8 +265,12 @@ function makeHttp(mcpService = mcp) {
 
 const it = testEffect(makeHttp())
 const mcpLegacyMetadata = { interrupted: true, output: "must not become a successful result" }
+const mcpErrorImageURL = "data:image/png;base64,Zm9v"
 const mcpErrorResult: CallToolResult = {
-  content: [{ type: "text", text: "Message was not sent" }],
+  content: [
+    { type: "text", text: "Message was not sent" },
+    { type: "image", data: "Zm9v", mimeType: "image/png" },
+  ],
   structuredContent: { sent: false, reason: "composer rejected the request" },
   isError: true,
   _meta: { privateToken: "do-not-send-to-model" },
@@ -337,6 +341,30 @@ function providerCfg(url: string) {
         options: {
           ...cfg.provider.test.options,
           baseURL: url,
+        },
+      },
+    },
+  }
+}
+
+function imageProviderCfg(url: string) {
+  const config = providerCfg(url)
+  return {
+    ...config,
+    provider: {
+      ...config.provider,
+      test: {
+        ...config.provider.test,
+        models: {
+          ...config.provider.test.models,
+          "test-model": {
+            ...config.provider.test.models["test-model"],
+            attachment: true,
+            modalities: {
+              input: ["text", "image"] as ("text" | "image")[],
+              output: ["text"] as "text"[],
+            },
+          },
         },
       },
     },
@@ -639,6 +667,14 @@ mcpIt.live("MCP isError becomes a tool error without losing standard result fiel
         _meta: mcpErrorResult._meta,
         legacyMetadata: mcpLegacyMetadata,
       })
+      expect(tool.state.attachments).toHaveLength(1)
+      expect(tool.state.attachments?.[0]).toMatchObject({
+        type: "file",
+        mime: "image/png",
+        url: mcpErrorImageURL,
+        sessionID: session.id,
+        messageID: tool.messageID,
+      })
       expect(statuses).toEqual(["error"])
       expect(result.parts.some((part) => part.type === "text" && part.text === "I saw that sending failed")).toBe(true)
 
@@ -648,8 +684,19 @@ mcpIt.live("MCP isError becomes a tool error without losing standard result fiel
       expect(followup).toContain("composer rejected the request")
       expect(followup).not.toContain("must not become a successful result")
       expect(followup).not.toContain("do-not-send-to-model")
+      expect(requests[1]).toMatchObject({
+        messages: expect.arrayContaining([
+          {
+            role: "user",
+            content: expect.arrayContaining([
+              { type: "text", text: MessageV2.SYNTHETIC_ATTACHMENT_PROMPT },
+              { type: "image_url", image_url: { url: mcpErrorImageURL } },
+            ]),
+          },
+        ]),
+      })
     }),
-    { git: true, config: providerCfg },
+    { git: true, config: imageProviderCfg },
   ),
 )
 

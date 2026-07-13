@@ -1152,10 +1152,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 truncated: truncated.truncated,
                 ...(truncated.truncated && { outputPath: truncated.outputPath }),
               }
+              const attachments = normalized.attachments.map((attachment) => ({
+                type: "file" as const,
+                ...attachment,
+                id: PartID.ascending(),
+                sessionID: ctx.sessionID,
+                messageID: input.processor.message.id,
+              }))
 
               if (normalized.isError) {
                 return yield* Effect.fail(
-                  new ToolResultError(truncated.content.trim() || "MCP tool execution failed", metadata),
+                  new ToolResultError(
+                    truncated.content.trim() || "MCP tool execution failed",
+                    metadata,
+                    attachments,
+                  ),
                 )
               }
 
@@ -1177,13 +1188,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 title: "",
                 metadata,
                 output: truncated.content,
-                attachments: normalized.attachments.map((attachment) => ({
-                  type: "file" as const,
-                  ...attachment,
-                  id: PartID.ascending(),
-                  sessionID: ctx.sessionID,
-                  messageID: input.processor.message.id,
-                })),
+                attachments,
                 content: normalized.content,
                 ...(normalized.structuredContent === undefined
                   ? {}

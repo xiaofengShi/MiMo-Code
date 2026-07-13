@@ -588,7 +588,7 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("converts assistant tool error into error-text tool result", async () => {
+  test("preserves tool error media as a synthetic user message", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
 
@@ -617,6 +617,15 @@ describe("session.message-v2.toModelMessage", () => {
               error: "nope",
               time: { start: 0, end: 1 },
               metadata: {},
+              attachments: [
+                {
+                  ...basePart(assistantID, "file-1"),
+                  type: "file",
+                  mime: "image/png",
+                  filename: "error-state.png",
+                  url: "data:image/png;base64,Zm9v",
+                },
+              ],
             },
             metadata: { openai: { tool: "meta" } },
           },
@@ -624,7 +633,8 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+    const messages = await MessageV2.toModelMessages(input, model)
+    expect(messages).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "run tool" }],
@@ -654,7 +664,21 @@ describe("session.message-v2.toModelMessage", () => {
           },
         ],
       },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: MessageV2.SYNTHETIC_ATTACHMENT_PROMPT },
+          {
+            type: "file",
+            mediaType: "image/png",
+            filename: "error-state.png",
+            data: "data:image/png;base64,Zm9v",
+          },
+        ],
+      },
     ])
+
+    expect(await MessageV2.toModelMessages(input, model, { stripMedia: true })).toStrictEqual(messages.slice(0, -1))
   })
 
   test("forwards partial bash output for aborted tool calls", async () => {
