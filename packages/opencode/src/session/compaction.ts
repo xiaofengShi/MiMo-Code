@@ -278,7 +278,10 @@ export const layer: Layer.Layer<
           }
         }
         const hasContent =
-          replay && messages.some((m) => m.info.role === "user" && !m.parts.some((p) => p.type === "compaction"))
+          replay &&
+          messages.some(
+            (m) => m.info.role === "user" && !m.parts.some((p) => p.type === "compaction" || p.type === "checkpoint"),
+          )
         if (!hasContent) {
           replay = undefined
           messages = scoped
