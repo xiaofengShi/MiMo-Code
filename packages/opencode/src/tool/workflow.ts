@@ -23,6 +23,16 @@ function parseComposeArgString(raw: string): Record<string, unknown> {
   return { task: raw }
 }
 
+// Normalize a bare string arg into an args object with a `question` field.
+// Mirrors parseComposeArgString but maps to {question} instead of {task}.
+function parseArgsAsQuestion(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null) return parsed as Record<string, unknown>
+  } catch {}
+  return { question: raw }
+}
+
 const runSchema = z.strictObject({
   operation: z.literal("run"),
   name: z
@@ -150,6 +160,32 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
         return { ...base, _composeDocsDir: docs }
       })
 
+    // Normalize and enrich args for the deep-research built-in:
+    //   - bare string args → { question: <string> }  (mirrors compose's parseComposeArgString)
+    //   - inject today (YYYY-MM-DD) from host Date  (the sandbox strips Date for determinism)
+    //   - inject dir = workspace root  (so agent writes and sandbox exists checks resolve
+    //     to the same location — the root cause of the "brief.md not created" bug was
+    //     dir ≠ workspaceRoot causing a path mismatch between agent writes and exists checks)
+    const enrichDeepResearchArgs = (raw: unknown, workspace?: string) =>
+      Effect.gen(function* () {
+        const ctx = yield* InstanceState.context
+        const resolvedWorkspace = workspace ?? ctx.worktree
+        const base =
+          typeof raw === "object" && raw !== null
+            ? { ...(raw as Record<string, unknown>) }
+            : typeof raw === "string"
+              ? parseArgsAsQuestion(raw)
+              : {}
+        // dir must equal the workspace root: the sandbox file primitives (exists,
+        // writeFile, readFile, glob) are jailed there, and the script's agent
+        // prompts reference ${dir}/... for file paths. Mismatched dir was the root
+        // cause of "brief.md not created" — the agent wrote to ${dir}/brief.md
+        // while exists checked ${workspaceRoot}/brief.md.
+        if (!base.dir) base.dir = resolvedWorkspace
+        if (!base.today) base.today = new Date().toISOString().slice(0, 10)
+        return base
+      })
+
     const run = Effect.fn("WorkflowTool.execute")(function* (
       input: z.infer<typeof parameters>,
       ctx: Tool.Context<Metadata>,
@@ -196,7 +232,11 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
           script,
           sessionID: ctx.sessionID as SessionID,
           parentActorID: ctx.agent ?? "main",
-          args: input.name === "compose" ? yield* enrichComposeArgs(input.args) : input.args,
+          args: input.name === "compose"
+            ? yield* enrichComposeArgs(input.args)
+            : input.name === "deep-research"
+              ? yield* enrichDeepResearchArgs(input.args, input.workspace)
+              : input.args,
           workspace: input.workspace,
           maxConcurrentAgents: cfg.workflow?.maxConcurrentAgents,
           scriptDeadlineMs: cfg.workflow?.scriptDeadlineMs,
