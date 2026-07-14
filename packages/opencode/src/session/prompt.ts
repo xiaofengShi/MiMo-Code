@@ -61,7 +61,6 @@ import {
   EMPTY_STEP_RECOVERY_REPLAN,
   isEmptyStep,
 } from "../session/prompt/empty-step-detection"
-import { composeSkillsBlock } from "@/skill/compose/extract"
 import { builtinSkillRoot, matchDocumentSkills } from "@/skill/builtin/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
@@ -651,12 +650,10 @@ export const layer = Layer.effect(
         (msg) => msg.info.role === "user" && msg.info.agent === "compose",
       )
       if (composeModeMsg) {
-        const composeModeBlock = composeSkillsBlock()
         const ctx = yield* InstanceState.context
         const composeCfg = (yield* config.get()).compose
         const docsDir = ConfigCompose.resolveDocsDir(ctx.worktree, composeCfg)
         const text = PROMPT_COMPOSE
-          .replace("{{compose_skills}}", composeModeBlock)
           .replace("{{compose_docs_dir}}", `Save compose skill outputs: specs in \`${path.join(docsDir, "specs")}\`, plans in \`${path.join(docsDir, "plans")}\`, reports in \`${path.join(docsDir, "reports")}\`.`)
         composeModeMsg.parts.unshift({
           id: PartID.ascending(),
@@ -703,7 +700,7 @@ ${entries}
         (p) => p.type === "text" && p.text.startsWith('<skill_content name="'),
       )
       if (!alreadyWrapped) {
-        // Use all() to include hidden skills (primarily compose:*) — respect the user's explicit /mention action
+        // Use all() to bypass per-agent permission filtering — respect the user's explicit /mention action
         const allSkills = yield* sys.all()
         if (allSkills.length > 0) {
           const bodyText = userMessage.parts
