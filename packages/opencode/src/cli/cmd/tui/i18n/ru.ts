@@ -354,6 +354,8 @@ export const dict = {
   "tui.command.variant.cycle.title": "Цикл вариантов",
   "tui.command.variant.list.title": "Сменить вариант модели",
   "tui.command.agent.cycle.reverse.title": "Цикл агентов (в обратном порядке)",
+  "tui.agent.locked": "Невозможно сменить режим после входа в {{mode}}",
+  "tui.agent.locked.subset": "В этой сессии можно переключаться только между {{agents}}",
   "tui.command.provider.login.title": "Войти",
   "tui.command.provider.connect.title": "Подключить провайдера",
   "tui.command.provider.logout.title": "Выйти",
