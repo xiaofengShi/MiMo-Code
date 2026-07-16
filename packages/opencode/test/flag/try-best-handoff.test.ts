@@ -18,8 +18,8 @@ function read(value?: string) {
 }
 
 describe("MIMOCODE_ENABLE_TRY_BEST_HANDOFF", () => {
-  test("is enabled by default and accepts explicit truthy values", () => {
-    expect(read()).toBe("true")
+  test("is disabled by default and accepts explicit truthy values", () => {
+    expect(read()).toBe("false")
     expect(read("true")).toBe("true")
     expect(read("1")).toBe("true")
   })

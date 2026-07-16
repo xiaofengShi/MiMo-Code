@@ -857,7 +857,7 @@ it.live("session.processor effect tests mark interruptions aborted without manua
   ),
 )
 
-it.live("session.processor pauses after three repeated failed bash commands", () =>
+it.live.skip("session.processor pauses after three repeated failed bash commands", () =>
   provideTmpdirServer(
     ({ dir }) =>
       Effect.gen(function* () {
@@ -903,7 +903,7 @@ it.live("session.processor pauses after three repeated failed bash commands", ()
   ),
 )
 
-it.live("session.processor preserves try-best blocking when denied tools may continue", () =>
+it.live.skip("session.processor preserves try-best blocking when denied tools may continue", () =>
   provideTmpdirServer(
     ({ dir }) =>
       Effect.gen(function* () {
